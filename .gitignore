@@ -52,3 +52,16 @@ embeddings/
 
 # node
 node_modules/
+
+# Docker
+docker-compose.override.yml
+
+# Large PDF files — only keep sample docs intentionally added
+rag/documents/war_and_peace.pdf
+
+# Milvus local data
+volumes/
+
+# Model cache downloaded at runtime
+.cache/huggingface/
+huggingface/

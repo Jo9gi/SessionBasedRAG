@@ -9,9 +9,9 @@ def recursive_chunking(
 
     documents,
 
-    chunk_size=500,
+    chunk_size=1000,
 
-    chunk_overlap=50
+    chunk_overlap=200
 ):
 
     splitter = RecursiveCharacterTextSplitter(

@@ -1,15 +1,11 @@
-def retrieve_chunks(
-query, vector_store, top_k=3):
+def retrieve_chunks(query, vector_store, top_k=5, filter=None):
 
-    retriever = vector_store.as_retriever(
+    search_kwargs = {"k": top_k}
 
-        search_type="similarity",
+    if filter:
+        search_kwargs["expr"] = filter
 
-        search_kwargs={
-
-            "k": top_k
-        }
-    )
+    retriever = vector_store.as_retriever(search_type="similarity", search_kwargs=search_kwargs)
 
     results = retriever.invoke(query)
 

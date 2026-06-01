@@ -1,0 +1,39 @@
+services:
+  milvus:
+    image: milvusdb/milvus:v2.4.4
+    command: milvus run standalone
+    environment:
+      - ETCD_USE_EMBED=true
+      - ETCD_DATA_DIR=/var/lib/milvus/etcd
+      - COMMON_STORAGETYPE=local
+    ports:
+      - "19530:19530"
+    volumes:
+      - milvus_data:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-change-me-in-production}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - MILVUS_URI=http://milvus:19530
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+      - sqlite_data:/app/db
+    depends_on:
+      milvus:
+        condition: service_healthy
+
+volumes:
+  hf_cache:
+  sqlite_data:
+  milvus_data:
