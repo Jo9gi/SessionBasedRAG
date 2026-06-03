@@ -1,9 +1,7 @@
 import os
 from langchain_openai import ChatOpenAI
 
-
 rewriter_llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0, api_key=os.getenv("OPENAI_API_KEY"))
-
 
 # =====================================================
 # GENERATE MULTIPLE QUERY VARIANTS

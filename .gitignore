@@ -65,3 +65,11 @@ volumes/
 # Model cache downloaded at runtime
 .cache/huggingface/
 huggingface/
+
+# Chroma local data
+chroma_db/
+temp_chroma_db/
+
+# Uploaded documents
+chroma_rag/documents/
+

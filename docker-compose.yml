@@ -1,39 +1,40 @@
+
+
 services:
-  milvus:
-    image: milvusdb/milvus:v2.4.4
-    command: milvus run standalone
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.0
     environment:
-      - ETCD_USE_EMBED=true
-      - ETCD_DATA_DIR=/var/lib/milvus/etcd
-      - COMMON_STORAGETYPE=local
+      - ETCD_AUTO_COMPACTION_RETENTION=0.5
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/etcd:/etcd
+    command: etcd -advertise-client-urls http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: minio server /data --console-address ":9001"
+
+  standalone:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v2.4.4
+    command: ["milvus", "run", "standalone"]
+    environment:
+      - ETCD_ENDPOINTS=etcd:2379
+      - MINIO_ADDRESS=minio:9000
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus:/var/lib/milvus
     ports:
       - "19530:19530"
-    volumes:
-      - milvus_data:/var/lib/milvus
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  web:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
-      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-change-me-in-production}
-      - HF_TOKEN=${HF_TOKEN:-}
-      - MILVUS_URI=http://milvus:19530
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    volumes:
-      - hf_cache:/root/.cache/huggingface
-      - sqlite_data:/app/db
+      - "9091:9091"
     depends_on:
-      milvus:
-        condition: service_healthy
-
-volumes:
-  hf_cache:
-  sqlite_data:
-  milvus_data:
+      - "etcd"
+      - "minio"
