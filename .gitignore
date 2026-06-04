@@ -35,41 +35,39 @@ dist/
 # MacOS
 .DS_Store
 
-# Huggingface / caches
-.cache/
-*.cache
-
-# Embeddings and large data
-rag/embeddings/
-embeddings/
-
-# Secrets
+# Secrets — never commit
 .env
 .env.*
 
-# PyCharm
-.idea/
-
-# node
-node_modules/
-
-# Docker
-docker-compose.override.yml
-
-# Large PDF files — only keep sample docs intentionally added
-rag/documents/war_and_peace.pdf
-
-# Milvus local data
-volumes/
-
-# Model cache downloaded at runtime
+# HuggingFace model cache — downloaded at runtime
+.cache/
 .cache/huggingface/
 huggingface/
+*.cache
 
-# Chroma local data
+# ChromaDB — generated at runtime, not committed
 chroma_db/
+chroma_sessions/
 temp_chroma_db/
 
-# Uploaded documents
+# User uploaded documents — never commit
 chroma_rag/documents/
 
+# Old Milvus RAG app — belongs to the old repo
+rag/
+
+# Docker files — not needed for this repo
+Dockerfile
+docker-compose.yml
+docker-compose.override.yml
+.dockerignore
+
+# Milvus volumes
+volumes/
+
+# Embeddings
+rag/embeddings/
+embeddings/
+
+# Node
+node_modules/
