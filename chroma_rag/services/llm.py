@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 load_dotenv()
 
-llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0, api_key=os.getenv("OPENAI_API_KEY"))
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=os.getenv("OPENAI_API_KEY"))
 
 
 # =====================================================
@@ -13,11 +13,6 @@ llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0, api_key=os.getenv("OPENAI
 # the system needs to understand what "section 2" refers to from history.
 # This function rewrites the follow-up into a fully self-contained question
 # so the retrieval step can find the right chunks.
-#
-# Example:
-#   History : Q: "What is the refund policy?" A: "Refunds within 30 days..."
-#   Follow-up: "What if I paid by card?"
-#   Condensed: "What is the refund policy for card payments?"
 # =====================================================
 
 def condense_question(chat_history: list, current_question: str) -> str:
@@ -31,8 +26,8 @@ def condense_question(chat_history: list, current_question: str) -> str:
         role = "User" if msg["role"] == "user" else "Assistant"
         history_text += f"{role}: {msg['content']}\n"
 
-    prompt = f"""Given the following conversation history and a follow-up question, \
-rewrite the follow-up question as a standalone question that can be understood without the history.
+    # NOTE: No leading spaces inside the f-string — indentation IS part of the string!
+    prompt = f"""Given the following conversation history and a follow-up question, rewrite the follow-up question as a standalone question that can be understood without the history.
 Return ONLY the rewritten question, nothing else.
 
 Conversation History:
@@ -44,15 +39,8 @@ Standalone Question:"""
     return response.content.strip()
 
 
-# =====================================================
-# GENERATE RESPONSE
-# =====================================================
-# Answers the user query strictly from the retrieved document chunks.
-# Chat history is included so the LLM can give a coherent, context-aware answer.
-# =====================================================
-
 def generate_response(query, retrieved_docs, chat_history=None):
-    context = "\n\n".join([doc.page_content[:800] for doc in retrieved_docs])
+    context = "\n\n".join([doc.page_content for doc in retrieved_docs])
 
     # Build conversation history string to include in the prompt (if any)
     history_text = ""
@@ -61,18 +49,22 @@ def generate_response(query, retrieved_docs, chat_history=None):
             role = "User" if msg["role"] == "user" else "Assistant"
             history_text += f"{role}: {msg['content']}\n"
 
-    prompt = f"""You are a helpful AI assistant.
+    # NOTE: No leading spaces inside the f-string — indentation IS part of the string!
+    prompt = f"""You are a helpful AI assistant answering questions about a document.
 
-Answer ONLY from the provided context.
-If the answer is not found in the context, say: "I could not find relevant information."
+Use the CONTEXT below to answer the QUESTION.
+- Extract and synthesize relevant information from the context.
+- If the context contains partial or related information, use it to give the best possible answer.
+- Only say "I could not find relevant information." if the context has nothing related to the question at all.
 
-{f'Conversation so far:{chr(10)}{history_text}' if history_text else ''}
+{f"Conversation so far:{chr(10)}{history_text}" if history_text else ""}
 CONTEXT:
 {context}
 
 QUESTION:
 {query}
-"""
+
+ANSWER:"""
 
     response = llm.invoke(prompt)
     return response.content

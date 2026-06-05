@@ -1,13 +1,4 @@
-# =====================================================
-# SESSION STORE (DATABASE BACKED)
-# =====================================================
-# All functions here read/write chat history from the database.
-# The rest of the codebase (views.py, llm.py) calls these functions
-# exactly the same way as before — nothing else needs to change.
-# =====================================================
-
 from chroma_rag.models import ChatSession, ChatMessage
-
 
 def get_history(session_id: str) -> list:
     """

@@ -29,14 +29,14 @@ def reciprocal_rank_fusion(results_list, k=60):
     return [doc_map[doc_id] for doc_id, _ in ranked]
 
 
-def hybrid_search(query, vector_store, chunks, bm25, top_k=10, filter=None):
+def hybrid_search(query, vector_store, chunks, bm25, top_k=20):
     """BM25 + dense retrieval run in parallel, then fused via RRF."""
     query_tokens = clean_tokenize(query)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        bm25_future = executor.submit(bm25.get_top_n, query_tokens, chunks, top_k)
-        dense_future = executor.submit(retrieve_chunks, query, vector_store, top_k, filter)
-        bm25_results = bm25_future.result()
+        bm25_future  = executor.submit(bm25.get_top_n, query_tokens, chunks, top_k)
+        dense_future = executor.submit(retrieve_chunks, query, vector_store, top_k)
+        bm25_results  = bm25_future.result()
         dense_results = dense_future.result()
 
     fused_results = reciprocal_rank_fusion([dense_results, bm25_results], k=60)

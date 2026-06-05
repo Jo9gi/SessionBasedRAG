@@ -1,3 +1,6 @@
 from langchain_huggingface import HuggingFaceEmbeddings
+import os
+from dotenv import load_dotenv
 
-embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+load_dotenv()
+embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L12-v2")
