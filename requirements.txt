@@ -1,21 +1,29 @@
-django
+# Project-wide requirements for SessionBasedRAG
+
+django>=5.0
 djangorestframework
-
-langchain==0.2.16
-langchain-core==0.2.40
-langchain-community==0.2.16
-langchain-openai==0.1.25
-langchain-huggingface==0.0.3
-langchain-milvus==0.1.7
-
-pymilvus==2.4.4
-
-sentence-transformers
-
-openai
-
-python-dotenv
-
+pandas
+openpyxl
+docx2txt
 pypdf
-
+python-dotenv
+openai
+sentence-transformers
 rank-bm25
+pyarrow==13.0.0
+huggingface-hub<1.0.0
+
+# LangChain ecosystem (compatible with the current code)
+langchain>=0.2.0,<0.3.0
+langchain-core>=0.2.0,<0.3.0
+langchain-community>=0.2.0,<0.3.0
+langchain-text-splitters>=0.2.0,<0.3.0
+langchain-chroma>=0.1.0
+langchain-huggingface>=0.0.1,<0.1.0
+langchain-openai>=0.1.0,<0.2.0
+
+# Vector store backend (FAISS) and optional dependencies
+faiss-cpu
+
+# Additional utilities used in the project
+# (add any other packages you discover during development)

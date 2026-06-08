@@ -2,31 +2,48 @@ from django.db import models
 import uuid
 
 class ChatSession(models.Model):
-    session_id    = models.CharField(max_length=100, unique=True, default=uuid.uuid4)
-    session_name  = models.CharField(max_length=255, blank=True, null=True)
-    chroma_path   = models.CharField(max_length=500)           
-    created_at    = models.DateTimeField(auto_now_add=True)
+    session_id = models.CharField(max_length=100, unique=True, db_index=True, default=uuid.uuid4)
+    session_name = models.CharField(max_length=255, blank=True, null=True)
+    chroma_path = models.CharField(max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.session_id} — {self.session_name}"
 
 class SessionDocument(models.Model):
-    session       = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name="documents")
-    document_name = models.CharField(max_length=255)
+    session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name="documents")
+    document_name = models.CharField(max_length=255, db_index=True)
     document_path = models.CharField(max_length=500)
-    created_at    = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.session.session_id} -> {self.document_name}"
 
-class ChatMessage(models.Model):
-    session       = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name="messages")
-    role          = models.CharField(max_length=20)            
-    content       = models.TextField()
-    created_at    = models.DateTimeField(auto_now_add=True)
+class DocumentMetadata(models.Model):
+    """Metadata for each uploaded document (title, TOC headings, etc.)."""
+    session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name="metadata", db_index=True)
+    document = models.ForeignKey(SessionDocument, on_delete=models.CASCADE, related_name="metadata_entries", db_index=True)
+    title = models.CharField(max_length=255, blank=True, null=True)
+    # Store headings/TOC as JSON string (e.g., [{\"level\":1,\"text\":\"Chapter 1\"}, ...])
+    headings = models.TextField(blank=True, null=True)
 
     class Meta:
-        ordering = ["created_at"]                              
+        indexes = [
+            models.Index(fields=["session", "document"]),
+        ]
+
+    def __str__(self):
+        return f"Metadata for {self.document.document_name} (session {self.session.session_id})"
+
+class ChatMessage(models.Model):
+    session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name="messages")
+    role = models.CharField(max_length=20)
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
 
     def __str__(self):
         return f"[{self.role}] {self.content[:60]}"
+

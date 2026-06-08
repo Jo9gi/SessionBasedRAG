@@ -8,14 +8,18 @@ from rest_framework.response import Response
 from rest_framework import status, serializers
 from rest_framework.parsers import MultiPartParser, FormParser
 from langchain_core.documents import Document
-from chroma_rag.models import ChatSession, SessionDocument, ChatMessage
+from chroma_rag.models import ChatSession, SessionDocument, ChatMessage, DocumentMetadata
 from .services.document_loader import load_document
-from .services.chunking import recursive_chunking
+from .services.chunking import header_recursive_chunking
 from .services.vectordb import create_vector_store, load_vector_store
 from .services.hybrid_search import hybrid_search, build_bm25
 from .services.reranker import rerank_chunks
 from .services.llm import generate_response, condense_question, llm
 from .services.session_store import get_history, add_to_history, clear_history
+from .services.cache import LRUCache
+
+# Global in‑process LRU cache for FAISS stores (capacity 3 sessions)
+_faiss_cache = LRUCache(capacity=3)
 
 _rag_cache = {
     "session_id":   None,
@@ -93,6 +97,10 @@ class RAGUploadAPIView(APIView):
                     session_name=session_name,
                     chroma_path=chroma_path
                 )
+                # Create a DocumentMetadata placeholder for the new session (empty headings)
+                # Actual headings can be populated later via a separate processing step
+                # Here we just ensure the row exists for future TOC queries
+                # No DocumentMetadata needed at session creation; will be added per document below
 
             os.makedirs(session_doc_dir, exist_ok=True)
             fs = FileSystemStorage(location=session_doc_dir)
@@ -104,6 +112,13 @@ class RAGUploadAPIView(APIView):
                 document_name=saved_name,
                 document_path=file_path
             )
+            # Store metadata entry for this uploaded document
+            DocumentMetadata.objects.create(
+                session=session,
+                document=sdoc,
+                title=saved_name,
+                headings="[]"  # empty JSON array placeholder
+            )
 
             documents = load_document(file_path)
             
@@ -112,13 +127,13 @@ class RAGUploadAPIView(APIView):
                 doc.metadata["doc_id"] = str(sdoc.id)
                 doc.metadata["session_id"] = session.session_id
                 
-            chunks = recursive_chunking(documents)
+            chunks = header_recursive_chunking(documents)
             
-            vector_store = create_vector_store(chunks, chroma_path)
+            vector_store = create_vector_store(chunks, session_id)
 
             try:
-                stored_data = vector_store.get()
-                all_chunks = [Document(page_content=doc_text, metadata=meta) for doc_text, meta in zip(stored_data.get("documents", []), stored_data.get("metadatas", []))]
+                # FAISS does not expose a get() method; we already have the chunks list.
+                all_chunks = chunks
             except Exception as e:
                 print(f"Error fetching existing chunks: {e}")
                 all_chunks = chunks
@@ -161,7 +176,7 @@ class RAGQueryAPIView(APIView):
             )
 
         try:
-            # 1. Load session from DB — confirms the session exists and gives us file + chroma paths
+            # 1. Load session from DB — confirms the session exists and gives us file paths
             try:
                 session = ChatSession.objects.get(session_id=session_id)
             except ChatSession.DoesNotExist:
@@ -176,24 +191,28 @@ class RAGQueryAPIView(APIView):
                 chunks       = _rag_cache["chunks"]
                 bm25         = _rag_cache["bm25"]
             else:
-                vector_store = load_vector_store(session.chroma_path)
-                
-                # Fetch chunks directly from ChromaDB for instant, offline load
-                try:
-                    stored_data = vector_store.get()
-                    
-                    chunks = [Document(page_content=doc_text, metadata=meta) for doc_text, meta in zip(stored_data.get("documents", []), stored_data.get("metadatas", []))]
-                except Exception as e:
-                    print(f"Error loading chunks directly from Chroma: {e}")
-                    chunks = []
+                # Try to retrieve FAISS store from LRU cache
+                vector_store = _faiss_cache.get(session_id)
+                if vector_store is None:
+                    vector_store = load_vector_store(session_id)
+                    _faiss_cache.put(session_id, vector_store)
+                # FAISS does not store raw chunks; we retain them from session documents
+                # Load chunks by re‑chunking the original files if needed
+                chunks = []
+                for sdoc in session.documents.all():
+                    if os.path.exists(sdoc.document_path):
+                        docs = load_document(sdoc.document_path)
+                        chunks.extend(header_recursive_chunking(docs))
+                if not chunks:
+                    print("No chunks could be loaded for session")
 
-                # Fallback to parsing the original documents if Chroma retrieval failed or returned empty
+                # Fallback to parsing the original documents if retrieval failed or returned empty
                 if not chunks:
                     try:
                         all_docs_chunks = []
                         for sdoc in session.documents.all():
                             if os.path.exists(sdoc.document_path):
-                                all_docs_chunks.extend(recursive_chunking(load_document(sdoc.document_path)))
+                                all_docs_chunks.extend(header_recursive_chunking(load_document(sdoc.document_path)))
                             else:
                                 print(f"Document file does not exist at {sdoc.document_path}")
                         chunks = all_docs_chunks
@@ -201,10 +220,7 @@ class RAGQueryAPIView(APIView):
                         print(f"Error loading fallback documents: {e}")
                         chunks = []
 
-                if chunks:
-                    bm25 = build_bm25(chunks)
-                else:
-                    bm25 = None
+                bm25 = build_bm25(chunks) if chunks else None
 
                 _rag_cache.update({
                     "session_id":   session_id,
@@ -212,6 +228,8 @@ class RAGQueryAPIView(APIView):
                     "chunks":       chunks,
                     "bm25":         bm25
                 })
+                # Also store the FAISS store in the LRU cache for quick reuse
+                _faiss_cache.put(session_id, vector_store)
 
             # 3. Load this session's chat history from the database
             chat_history = get_history(session_id)
@@ -361,3 +379,33 @@ class RAGDeleteSessionAPIView(APIView):
 class RAGUIView(View):
     def get(self, request):
         return render(request, "chroma_rag/index.html")
+
+
+# =====================================================
+# METADATA ENDPOINTS
+# =====================================================
+
+class DocumentCountAPIView(APIView):
+    """Return total number of uploaded documents across all sessions."""
+    def get(self, request, *args, **kwargs):
+        total = SessionDocument.objects.count()
+        return Response({"total_documents": total}, status=status.HTTP_200_OK)
+
+class TOCAPIView(APIView):
+    """Return the table of contents (headings) for a specific document.
+    Query parameters: ?session_id=...&document_name=...
+    """
+    def get(self, request, *args, **kwargs):
+        session_id = request.query_params.get("session_id")
+        document_name = request.query_params.get("document_name")
+        if not session_id or not document_name:
+            return Response({"error": "session_id and document_name are required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            sdoc = SessionDocument.objects.get(session__session_id=session_id, document_name=document_name)
+            meta = DocumentMetadata.objects.get(document=sdoc)
+            # headings stored as JSON string; parse safely
+            import json
+            headings = json.loads(meta.headings) if meta.headings else []
+        except (SessionDocument.DoesNotExist, DocumentMetadata.DoesNotExist) as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"document": document_name, "headings": headings}, status=status.HTTP_200_OK)
