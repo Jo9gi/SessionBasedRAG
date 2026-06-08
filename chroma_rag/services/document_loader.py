@@ -12,6 +12,7 @@ def load_document(file_path):
     Loads and parses a document dynamically based on its file extension.
     Supported extensions: .pdf, .docx, .txt, .xlsx, .xls
     """
+    
     ext = os.path.splitext(file_path)[1].lower()
     documents = []
 
@@ -53,8 +54,13 @@ def load_document(file_path):
     # Standardize metadata keys for all loaded document pages/sheets
     file_name = os.path.basename(file_path)
     for doc in documents:
+
         doc.metadata["source"] = file_path
+
         doc.metadata["file_name"] = file_name
-        doc.metadata["page"] = doc.metadata.get("page", 0)
+
+        doc.metadata["page"] = doc.metadata.get("page",0)
+
+        doc.metadata["document_type"] = ext
 
     return documents

@@ -10,13 +10,15 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from langchain_core.documents import Document
 from chroma_rag.models import ChatSession, SessionDocument, ChatMessage, DocumentMetadata
 from .services.document_loader import load_document
-from .services.chunking import header_recursive_chunking
-from .services.vectordb import create_vector_store, load_vector_store
+from .services.chunking import chapter_recursive_chunking
+from .services.vectordb import (create_vector_store, load_vector_store, save_chunks, load_chunks, save_bm25, load_bm25)
 from .services.hybrid_search import hybrid_search, build_bm25
 from .services.reranker import rerank_chunks
 from .services.llm import generate_response, condense_question, llm
 from .services.session_store import get_history, add_to_history, clear_history
 from .services.cache import LRUCache
+from .services.query_router import detect_query_type
+from .services.metadata_extractor import extract_headings
 
 # Global in‑process LRU cache for FAISS stores (capacity 3 sessions)
 _faiss_cache = LRUCache(capacity=3)
@@ -78,13 +80,13 @@ class RAGUploadAPIView(APIView):
                 except ChatSession.DoesNotExist:
                     return Response({"error": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
                 session_doc_dir = os.path.join("chroma_rag", "documents", session_id)
-                chroma_path = session.chroma_path
+                # The FAISS store path is stored in session.chroma_path (legacy name)
+                # No extra variable needed; we will use session.chroma_path later
             else:
                 # Create new session
                 session_id = str(uuid.uuid4())
                 session_doc_dir = os.path.join("chroma_rag", "documents", session_id)
-                chroma_path = os.path.join("chroma_sessions", session_id)
-                
+
                 # Generate session name using LLM
                 prompt = f"Generate a short, concise 3-5 word title for a document named '{uploaded_file.name}'."
                 try:
@@ -92,14 +94,13 @@ class RAGUploadAPIView(APIView):
                 except:
                     session_name = uploaded_file.name
                     
+                # Create a new FAISS storage directory for this session (saved in DB as chroma_path for legacy compatibility)
+                chroma_path = os.path.join("faiss_indices", f"{session_id}.index")
                 session = ChatSession.objects.create(
                     session_id=session_id,
                     session_name=session_name,
                     chroma_path=chroma_path
                 )
-                # Create a DocumentMetadata placeholder for the new session (empty headings)
-                # Actual headings can be populated later via a separate processing step
-                # Here we just ensure the row exists for future TOC queries
                 # No DocumentMetadata needed at session creation; will be added per document below
 
             os.makedirs(session_doc_dir, exist_ok=True)
@@ -113,22 +114,34 @@ class RAGUploadAPIView(APIView):
                 document_path=file_path
             )
             # Store metadata entry for this uploaded document
+            # DocumentMetadata.objects.create(
+            #     session=session,
+            #     document=sdoc,
+            #     title=saved_name,
+            #     headings="[]"  # empty JSON array placeholder
+            # )
+
+            documents = load_document(file_path)
+            page_count = len(documents)
+            import json
+
+            headings = extract_headings(documents)
+
             DocumentMetadata.objects.create(
                 session=session,
                 document=sdoc,
                 title=saved_name,
-                headings="[]"  # empty JSON array placeholder
+                page_count=page_count,
+                headings=json.dumps(headings)
             )
 
-            documents = load_document(file_path)
-            
             for doc in documents:
                 doc.metadata["file_name"] = saved_name
                 doc.metadata["doc_id"] = str(sdoc.id)
                 doc.metadata["session_id"] = session.session_id
                 
-            chunks = header_recursive_chunking(documents)
-            
+            chunks = chapter_recursive_chunking(documents)
+            save_chunks(session_id,chunks)
             vector_store = create_vector_store(chunks, session_id)
 
             try:
@@ -141,7 +154,9 @@ class RAGUploadAPIView(APIView):
             _rag_cache["session_id"]   = session_id
             _rag_cache["vector_store"] = vector_store
             _rag_cache["chunks"]       = all_chunks
-            _rag_cache["bm25"]         = build_bm25(all_chunks)
+            bm25_index = build_bm25(all_chunks)
+            save_bm25(session_id,bm25_index)
+            _rag_cache["bm25"] = bm25_index
 
             all_doc_names = list(session.documents.values_list("document_name", flat=True))
 
@@ -162,10 +177,10 @@ class RAGUploadAPIView(APIView):
 
 
 class RAGQueryAPIView(APIView):
-
     def post(self, request, *args, **kwargs):
         original_query = request.data.get("query")
-        session_id     = request.data.get("session_id")
+        query_lower = original_query.lower()
+        session_id = request.data.get("session_id")
 
         if not original_query:
             return Response({"error": "'query' is required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -191,36 +206,21 @@ class RAGQueryAPIView(APIView):
                 chunks       = _rag_cache["chunks"]
                 bm25         = _rag_cache["bm25"]
             else:
-                # Try to retrieve FAISS store from LRU cache
                 vector_store = _faiss_cache.get(session_id)
                 if vector_store is None:
                     vector_store = load_vector_store(session_id)
                     _faiss_cache.put(session_id, vector_store)
-                # FAISS does not store raw chunks; we retain them from session documents
-                # Load chunks by re‑chunking the original files if needed
-                chunks = []
-                for sdoc in session.documents.all():
-                    if os.path.exists(sdoc.document_path):
-                        docs = load_document(sdoc.document_path)
-                        chunks.extend(header_recursive_chunking(docs))
-                if not chunks:
-                    print("No chunks could be loaded for session")
 
-                # Fallback to parsing the original documents if retrieval failed or returned empty
-                if not chunks:
-                    try:
-                        all_docs_chunks = []
-                        for sdoc in session.documents.all():
-                            if os.path.exists(sdoc.document_path):
-                                all_docs_chunks.extend(header_recursive_chunking(load_document(sdoc.document_path)))
-                            else:
-                                print(f"Document file does not exist at {sdoc.document_path}")
-                        chunks = all_docs_chunks
-                    except Exception as e:
-                        print(f"Error loading fallback documents: {e}")
-                        chunks = []
+                chunks = load_chunks(session_id)
+                bm25 = load_bm25(session_id)
+                if chunks is None:
+                    print(f"[WARNING] chunks.pkl missing for {session_id}")
+                    chunks = []
 
-                bm25 = build_bm25(chunks) if chunks else None
+                if bm25 is None:
+                    print(f"[WARNING] bm25.pkl missing for {session_id}")
+                    bm25 = build_bm25(chunks) if chunks else None
+
 
                 _rag_cache.update({
                     "session_id":   session_id,
@@ -244,10 +244,14 @@ class RAGQueryAPIView(APIView):
                 search_query = original_query
 
             if chunks and bm25 is not None:
-                retrieved_docs = hybrid_search(
-                    query=search_query, vector_store=vector_store,
-                    chunks=chunks, bm25=bm25, top_k=20
-                )
+                query_type = detect_query_type(original_query)
+                if query_type == "semantic":
+                    retrieved_docs = hybrid_search(
+                        query=search_query, vector_store=vector_store,
+                        chunks=chunks, bm25=bm25, top_k=20
+                    )
+                else:
+                    retrieved_docs = []
             else:
                 retrieved_docs = []
 
@@ -334,19 +338,29 @@ class RAGDeleteSessionAPIView(APIView):
         try:
             session = ChatSession.objects.get(session_id=session_id)
 
-            # Delete ChromaDB vector store directory from disk
-            if os.path.exists(session.chroma_path):
+            # Delete FAISS vector store directory from disk (contains index, chunks, bm25)
+            faiss_dir = session.chroma_path
+            if os.path.isdir(faiss_dir):
                 try:
-                    shutil.rmtree(session.chroma_path)
+                    shutil.rmtree(faiss_dir)
                 except Exception as e:
-                    print(f"Error removing chroma path: {e}")
-
-            # Delete uploaded document from disk
-            if os.path.exists(session.document_path):
+                    print(f"Error removing FAISS directory: {e}")
+            # Delete uploaded document files belonging to this session (stored via SessionDocument entries)
+            for sdoc in session.documents.all():
+                if os.path.isfile(sdoc.document_path):
+                    try:
+                        os.remove(sdoc.document_path)
+                    except Exception as e:
+                        print(f"Error removing document {sdoc.document_path}: {e}")
+            # Remove the now‑empty parent folder if it exists
+            parent_dir = os.path.join("chroma_rag", "documents", session_id)
+            if os.path.isdir(parent_dir) and not os.listdir(parent_dir):
                 try:
-                    os.remove(session.document_path)
-                    # Clean up parent directory if empty
-                    parent_dir = os.path.dirname(session.document_path)
+                    os.rmdir(parent_dir)
+                except Exception as e:
+                    print(f"Error removing document folder {parent_dir}: {e}")
+
+            # No need to delete session.document_path (does not exist); DB rows are removed later
                     if os.path.exists(parent_dir) and not os.listdir(parent_dir):
                         os.rmdir(parent_dir)
                 except Exception as e:

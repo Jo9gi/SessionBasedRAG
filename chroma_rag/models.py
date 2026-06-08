@@ -20,17 +20,11 @@ class SessionDocument(models.Model):
         return f"{self.session.session_id} -> {self.document_name}"
 
 class DocumentMetadata(models.Model):
-    """Metadata for each uploaded document (title, TOC headings, etc.)."""
     session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name="metadata", db_index=True)
     document = models.ForeignKey(SessionDocument, on_delete=models.CASCADE, related_name="metadata_entries", db_index=True)
     title = models.CharField(max_length=255, blank=True, null=True)
-    # Store headings/TOC as JSON string (e.g., [{\"level\":1,\"text\":\"Chapter 1\"}, ...])
+    page_count = models.IntegerField(default=0)
     headings = models.TextField(blank=True, null=True)
-
-    class Meta:
-        indexes = [
-            models.Index(fields=["session", "document"]),
-        ]
 
     def __str__(self):
         return f"Metadata for {self.document.document_name} (session {self.session.session_id})"

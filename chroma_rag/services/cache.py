@@ -2,7 +2,7 @@ import threading
 from collections import OrderedDict
 
 class LRUCache:
-    """Thread‑safe LRU cache for storing per‑session FAISS stores (or any object)."""
+    """Thread-safe LRU cache for storing per-session FAISS stores (or any object)."""
     def __init__(self, capacity: int = 3):
         self.capacity = capacity
         self.store = OrderedDict()

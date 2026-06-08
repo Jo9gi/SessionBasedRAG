@@ -2,24 +2,6 @@ from sentence_transformers import CrossEncoder
 
 reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
-# =====================================================
-# SCORE THRESHOLD
-# =====================================================
-# The ms-marco cross-encoder scores range roughly from -12 to +12.
-#   score > 0   → chunk is likely relevant to the query
-#   score 0 to -3 → weakly relevant (borderline)
-#   score < -3  → chunk is essentially irrelevant noise
-#
-# Without a threshold, the LLM receives junk chunks and either:
-#   (a) hallucinates an answer from loose word associations, OR
-#   (b) gets confused by irrelevant context and refuses to answer
-#
-# With MIN_SCORE = -3.0:
-#   - Very negative scores (-8, -10, etc.) are filtered out
-#   - If ALL chunks are filtered, rerank_chunks returns [] 
-#     → views.py / test_rag.py catches empty list → "no relevant info"
-# =====================================================
-
 MIN_SCORE = -3.0
 
 
