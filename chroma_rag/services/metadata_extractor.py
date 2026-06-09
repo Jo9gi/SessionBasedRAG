@@ -1,24 +1,25 @@
 import re
-# from .document_loader import load_document
 
 def extract_headings(documents):
+
     headings = []
 
-    pattern = re.compile(r"^(?:CHAPTER\s+\d+|[0-9]+\.[0-9]*\s+.+|[A-Z][A-Z\s]{5,})$", re.MULTILINE)
+    chapter_pattern = re.compile(r"^CHAPTER\s+\d+", re.IGNORECASE)
+
+    toc_pattern = re.compile(r"^\d+\.\s+[A-Z].+")
 
     for doc in documents:
-        matches = pattern.findall(doc.page_content)
-        for match in matches:
 
-            heading = match.strip()
+        lines = doc.page_content.splitlines()
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            if chapter_pattern.match(line):
+                headings.append({"text": line})
 
-            if heading and heading not in headings:
-
-                headings.append(
-                    {
-                        "text": heading
-                    }
-                )
+            elif toc_pattern.match(line):
+                if len(line) < 120:
+                    headings.append({"text": line})
 
     return headings
-

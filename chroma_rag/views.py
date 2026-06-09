@@ -1,4 +1,5 @@
 import os
+import json
 import uuid
 from django.shortcuts import render
 from django.views import View
@@ -127,13 +128,7 @@ class RAGUploadAPIView(APIView):
 
             headings = extract_headings(documents)
 
-            DocumentMetadata.objects.create(
-                session=session,
-                document=sdoc,
-                title=saved_name,
-                page_count=page_count,
-                headings=json.dumps(headings)
-            )
+            DocumentMetadata.objects.create(session=session,document=sdoc,title=saved_name,page_count=page_count,headings=json.dumps(headings))
 
             for doc in documents:
                 doc.metadata["file_name"] = saved_name
@@ -197,14 +192,49 @@ class RAGQueryAPIView(APIView):
             except ChatSession.DoesNotExist:
                 return Response(
                     {"error": f"Session '{session_id}' not found. Please upload a document to start a new session."},
-                    status=status.HTTP_404_NOT_FOUND
-                )
+                    status=status.HTTP_404_NOT_FOUND)
+
+            query_type = detect_query_type(original_query)
+            if query_type == "document_count":
+                count = SessionDocument.objects.filter(session=session).count()
+                return Response(
+                    {
+                        "session_id": session_id,
+                        "query": original_query,
+                        "answer": f"There are {count} document(s) uploaded in this session."
+                    },status=status.HTTP_200_OK)
+
+            if query_type == "document_names":
+                docs = list(SessionDocument.objects.filter(session=session).values_list("document_name", flat=True))
+                return Response(
+                    {
+                        "session_id": session_id,
+                        "query": original_query,
+                        "answer": docs
+                    },status=status.HTTP_200_OK)
+
+            if query_type == "chapter_names":
+                metadata_rows = DocumentMetadata.objects.filter(session=session)
+                chapters = []
+                for row in metadata_rows:
+                    try:
+                        headings = json.loads(row.headings)
+                        for item in headings:
+                            if isinstance(item, dict):
+                                text = item.get("text")
+                                if text:
+                                    chapters.append(text)
+                    except Exception:
+                        continue
+
+                return Response(
+                    {"session_id": session_id,"query": original_query,"answer": chapters}, status=status.HTTP_200_OK)
 
         
             if _rag_cache["session_id"] == session_id and _rag_cache["vector_store"] is not None:
                 vector_store = _rag_cache["vector_store"]
-                chunks       = _rag_cache["chunks"]
-                bm25         = _rag_cache["bm25"]
+                chunks = _rag_cache["chunks"]
+                bm25 = _rag_cache["bm25"]
             else:
                 vector_store = _faiss_cache.get(session_id)
                 if vector_store is None:
@@ -246,10 +276,7 @@ class RAGQueryAPIView(APIView):
             if chunks and bm25 is not None:
                 query_type = detect_query_type(original_query)
                 if query_type == "semantic":
-                    retrieved_docs = hybrid_search(
-                        query=search_query, vector_store=vector_store,
-                        chunks=chunks, bm25=bm25, top_k=20
-                    )
+                    retrieved_docs = hybrid_search(query=search_query, vector_store=vector_store, chunks=chunks, bm25=bm25, top_k=20)
                 else:
                     retrieved_docs = []
             else:
